@@ -61,8 +61,12 @@ and NVRTC on CUDA 12.x for x86 does not carry it as a builtin. The result is:
 cuda_fp16.h(129): catastrophic error: cannot open source file "vector_types.h"
 ```
 
-`patches/0001-nvrtc-cuda-include-path.patch` adds one include path, taken from
-`EDGELLM_NVRTC_INCLUDE` when set. Ten lines.
+`patches/0001-nvrtc-cuda-include-path.patch` adds one include path, taken from `CUDA_DIR`,
+which their CMake already resolves, and passed to the source as a compile definition.
+`EDGELLM_NVRTC_INCLUDE` overrides it at runtime for a relocated install. This patch is exactly
+what was sent upstream: [issue #204](https://github.com/NVIDIA/TensorRT-Edge-LLM/issues/204) and
+[PR #205](https://github.com/NVIDIA/TensorRT-Edge-LLM/pull/205). If it lands, this repo keeps
+only the recipe.
 
 ## Which kernels you need
 
@@ -96,7 +100,7 @@ Every script is short and does one thing; read them rather than trusting this li
 | variable | why |
 |---|---|
 | `EDGELLM_PLUGIN_PATH` | the tools look for `build/libNvInfer_edgellm_plugin.so` relative to the working directory and say so only in an INFO line |
-| `EDGELLM_NVRTC_INCLUDE` | the include path added by the patch |
+| `EDGELLM_NVRTC_INCLUDE` | optional; overrides the include path the patch bakes in at configure time |
 | `LD_LIBRARY_PATH` | the TensorRT libraries, if they come from a wheel rather than `/usr` |
 
 ## What this does not tell you

@@ -1,8 +1,25 @@
+diff --git a/cpp/CMakeLists.txt b/cpp/CMakeLists.txt
+index 1b4840d..58e8c5a 100644
+--- a/cpp/CMakeLists.txt
++++ b/cpp/CMakeLists.txt
+@@ -182,6 +182,12 @@ target_include_directories(edgellmPluginJit PRIVATE ${COMMON_INCLUDE_DIRS}
+                                                     ${NVRTC_INCLUDE_DIR})
+ target_link_libraries(
+   edgellmPluginJit PRIVATE ${NVRTC_LIB} ${CUDA_DRIVER_LINK_LIB} ${CUDART_LIB})
++# The XQA JIT compiles its kernel through NVRTC at load time and needs the
++# toolkit's own headers on the include path (cuda_fp16.h -> vector_types.h).
++# Pass the directory this build was configured against; EDGELLM_NVRTC_INCLUDE
++# overrides it at runtime.
++target_compile_definitions(
++  edgellmPluginJit PRIVATE EDGELLM_CUDA_INCLUDE_DIR="${CUDA_DIR}/include")
+ add_dependencies(edgellmPluginJit generatePluginJitEmbeddedSources)
+ edgellm_apply_qnx_warning_suppressions(edgellmPluginJit)
+ edgellm_set_hidden_visibility(edgellmPluginJit)
 diff --git a/cpp/kernels/decodeAttentionKernels/decoderXQAJitCompiler.cpp b/cpp/kernels/decodeAttentionKernels/decoderXQAJitCompiler.cpp
-index 9922199..daacf2f 100644
+index 9922199..1127b7c 100644
 --- a/cpp/kernels/decodeAttentionKernels/decoderXQAJitCompiler.cpp
 +++ b/cpp/kernels/decodeAttentionKernels/decoderXQAJitCompiler.cpp
-@@ -24,6 +24,7 @@
+@@ -24,11 +24,18 @@
  
  #include <algorithm>
  #include <array>
@@ -10,19 +27,33 @@ index 9922199..daacf2f 100644
  #include <stdexcept>
  #include <string>
  #include <type_traits>
-@@ -105,7 +106,15 @@ std::vector<std::string> buildNvrtcOptions(XQAJitKey const& key)
+ #include <vector>
+ 
++// Set by the build system to the CUDA toolkit this build was configured against. The
++// conventional install path is the fallback for builds that do not define it.
++#ifndef EDGELLM_CUDA_INCLUDE_DIR
++#define EDGELLM_CUDA_INCLUDE_DIR "/usr/local/cuda/include"
++#endif
++
+ namespace trt_edgellm
+ {
+ namespace
+@@ -105,7 +112,18 @@ std::vector<std::string> buildNvrtcOptions(XQAJitKey const& key)
      options.emplace_back("--use_fast_math");
      options.emplace_back("--device-as-default-execution-space");
      options.emplace_back(getGpuArchitectureOption(key.sm));
 -    // No -I flags needed: all headers are passed as virtual includes to nvrtcCreateProgram.
-+    // The project's own headers are virtual includes on nvrtcCreateProgram, but cuda_fp16.h
-+    // includes vector_types.h from the toolkit, which NVRTC does not carry as a builtin on
-+    // CUDA 12.x for x86. Without this the SM89 XQA compile fails with a catastrophic error
-+    // naming that file. EDGELLM_NVRTC_INCLUDE overrides for relocatable installs.
++    // The kernel's own headers are virtual includes on nvrtcCreateProgram, but cuda_fp16.h
++    // includes vector_types.h from the CUDA toolkit, which NVRTC does not carry as a builtin
++    // on CUDA 12.x for x86. Without this include path the compile fails with
++    //   cuda_fp16.h(129): catastrophic error: cannot open source file "vector_types.h"
++    // and it surfaces during ONNX parsing as a plugin creation failure, which points away
++    // from the cause. EDGELLM_NVRTC_INCLUDE overrides the configured path for installs that
++    // are relocated away from the toolkit they were built against.
 +    {
-+        char const* const cudaInclude = std::getenv("EDGELLM_NVRTC_INCLUDE");
-+        options.emplace_back(std::string("-I")
-+            + (cudaInclude != nullptr ? cudaInclude : "/usr/local/cuda/include"));
++        char const* const cudaIncludeOverride = std::getenv("EDGELLM_NVRTC_INCLUDE");
++        options.emplace_back(
++            std::string("-I") + (cudaIncludeOverride != nullptr ? cudaIncludeOverride : EDGELLM_CUDA_INCLUDE_DIR));
 +    }
      options.emplace_back("-DGENERATE_CUBIN=1");
      options.emplace_back("-DNDEBUG");
